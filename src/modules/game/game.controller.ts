@@ -29,14 +29,14 @@ export class GameController {
   @UseGuards(AuthGuard('jwt'))
   @Post('join')
   async join(@Request() req) {
-    return this.gameService.joinSession(req.user.sub);
+    return this.gameService.joinSession(req.user.userId);
   }
 
   // POST /game/player select
   @UseGuards(AuthGuard('jwt'))
   @Put('player-select')
   async playerSelect(@Request() req, @Body() dto: JoinGameDto) {
-    return this.gameService.playerSelect(req.user.sub, dto.number);
+    return this.gameService.playerSelect(req.user.userId, dto.number);
   }
 
   // GET /game/session

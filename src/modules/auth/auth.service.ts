@@ -23,11 +23,13 @@ export class AuthService {
     if (existing) {
       throw new ConflictException('Username already taken');
     }
+
     const user = this.userRepository.create({ username });
-    this.userRepository.save(user);
-    const payload = { sub: user.id, username: user.username };
+    const savedUser = await this.userRepository.save(user);
+    const payload = { sub: savedUser.id, username: savedUser.username };
+
     return {
-      username: user.username,
+      username: savedUser.username,
       access_token: this.jwtService.sign(payload),
     };
   }
@@ -39,6 +41,7 @@ export class AuthService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
+
     const payload = { sub: user.id, username: user.username };
 
     return {

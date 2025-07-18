@@ -80,7 +80,8 @@ export class GameService {
   }
 
   // User joins the current session and picks a number
-  async joinSession(userId: UUID) {
+  async joinSession(userId: string) {
+    console.log(userId);
     if (!this.currentSession) {
       throw new NotFoundException('No active session');
     }
