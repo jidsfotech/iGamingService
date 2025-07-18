@@ -1,10 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from "typeorm";
-import { PlayerSelection } from "./player-selection.entity";
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
+import { PlayerSelection } from './player-selection.entity';
 
 @Entity()
 export class GameSession {
-  @PrimaryGeneratedColumn()
-  id: number;
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
   @Column()
   startTime: Date;
@@ -15,6 +15,6 @@ export class GameSession {
   @Column({ nullable: true })
   winningNumber: number;
 
-  @OneToMany(() => PlayerSelection, (selection: PlayerSelection) => selection.gameSession)
+  @OneToMany(() => PlayerSelection, (selection) => selection.gameSession)
   selections: PlayerSelection[];
-} 
+}
