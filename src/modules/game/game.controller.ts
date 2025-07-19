@@ -49,8 +49,11 @@ export class GameController {
   // Get info about a ended session
   @UseGuards(AuthGuard('jwt'))
   @Get('ended-session/:id')
-  async getEndedSessionInfo(@Param('id') endedSessionId: UUID) {
-    return this.gameService.getEndedSessionInfo(endedSessionId);
+  async getEndedSessionInfo(@Request() req, @Param('id') endedSessionId: UUID) {
+    return this.gameService.getEndedSessionInfo(
+      req.user.userId,
+      endedSessionId,
+    );
   }
 
   // GET /game/top-players
