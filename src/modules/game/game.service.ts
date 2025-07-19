@@ -16,7 +16,9 @@ import { UUID } from 'crypto';
 export class GameService {
   private currentSession: GameSession | null = null;
   private readonly logger = new Logger(GameService.name);
-  readonly breakTime: number = 10 * 1000; // 10 seconds between sessions
+
+  // 15 seconds between sessions
+  readonly breakTime: number = 15 * 1000;
 
   constructor(
     @InjectRepository(GameSession)
@@ -26,6 +28,7 @@ export class GameService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
   ) {
+    // Run the game loop
     setInterval(() => {
       (async () => {
         if (this.currentSession) {
@@ -33,60 +36,67 @@ export class GameService {
         }
         await this.initSession();
       })();
-    }, 70000); // 30 seconds
+    }, 35000);
   }
 
-  // Start a new session
+  // Initialize a new game session
   async initSession() {
     const now = new Date();
-    const end = new Date(now.getTime() + 60000); // 20 seconds
+    const end = new Date(now.getTime() + 20000); // 20 seconds session time
+
     const session = this.sessionRepo.create({ startTime: now, endTime: end });
     this.currentSession = await this.sessionRepo.save(session);
+
     this.logger.log(`Started new session: ${session.id}`);
   }
 
-  // End the current session
+  // End the current session and process results
   async endSession() {
     if (!this.currentSession) return;
-    // Pick winning number
+
+    const sessionId = this.currentSession.id;
     const winningNumber = Math.floor(Math.random() * 10) + 1;
-    this.currentSession.winningNumber = winningNumber;
-    await this.sessionRepo.save(this.currentSession);
-    // Find winners
+
+    await this.sessionRepo.update(sessionId, { winningNumber });
     const participants = await this.selectionRepo.find({
-      where: {
-        gameSession: { id: this.currentSession.id },
-      },
+      where: { gameSession: { id: sessionId } },
       relations: ['user'],
     });
+
     const winners = participants.filter(
       (p) => p.selectedNumber === winningNumber,
     );
     const losers = participants.filter(
       (p) => p.selectedNumber !== winningNumber,
     );
-    for (const winner of winners) {
-      winner.user.wins += 1;
-      await this.userRepo.save(winner.user);
+
+    for (const { user } of winners) {
+      user.wins += 1;
     }
-    for (const loser of losers) {
-      loser.user.looses += 1;
-      await this.userRepo.save(loser.user);
+
+    for (const { user } of losers) {
+      user.looses += 1;
     }
+
+    await this.userRepo.save([
+      ...winners.map((w) => w.user),
+      ...losers.map((l) => l.user),
+    ]);
+
     this.logger.log(
-      `Session ${this.currentSession.id} ended. Winning number: ${winningNumber}`,
+      `Session ${sessionId} ended. Winning number: ${winningNumber}. ` +
+        `Winners: ${winners.length}, Losers: ${losers.length}`,
     );
+
     this.currentSession = null;
   }
 
-  // User joins the current session and picks a number
-  async joinSession(userId: string) {
-    console.log(userId);
+  // User oin the current session
+  async joinSession(userId: UUID) {
     if (!this.currentSession) {
       throw new NotFoundException('No active session');
     }
 
-    // Check if the user has already joined the session
     const existingSelection = await this.selectionRepo.findOne({
       where: {
         user: { id: userId },
@@ -98,74 +108,57 @@ export class GameService {
       throw new ConflictException('User already joined this session');
     }
 
-    try {
-      // Create and save the user's selection for the current session
-      const user = await this.userRepo.findOne({ where: { id: userId } });
-      if (!user) {
-        this.logger.error('User not found');
-        throw new Error('User not found');
-      }
-
-      const userSelection = this.selectionRepo.create({
-        user,
-        gameSession: this.currentSession,
-      });
-
-      await this.selectionRepo.save(userSelection);
-      return {
-        message: 'Joined session',
-        sessionId: this.currentSession.id,
-      };
-    } catch (error) {
-      this.logger.error(error);
-      throw new BadRequestException('Failed to join session');
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) {
+      this.logger.error(`User not found: ${userId}`);
+      throw new NotFoundException('User not found');
     }
+
+    const userSelection = this.selectionRepo.create({
+      user,
+      gameSession: this.currentSession,
+    });
+
+    await this.selectionRepo.save(userSelection);
+
+    return {
+      message: 'Joined session',
+      sessionId: this.currentSession.id,
+    };
   }
 
+  // User pick a number after joining
   async playerSelect(userId: UUID, selectedNumber: number) {
     if (!this.currentSession) {
       throw new NotFoundException('No active session');
     }
 
-    const user = await this.userRepo.findOneBy({ id: userId });
+    const selection = await this.selectionRepo.findOne({
+      where: {
+        user: { id: userId },
+        gameSession: { id: this.currentSession.id },
+      },
+      relations: ['user', 'gameSession'],
+    });
 
-    if (!user) {
-      throw new NotFoundException('User not found');
+    if (!selection) {
+      throw new NotFoundException('Player has not joined the session yet');
     }
 
-    try {
-      // Find the player's selection for the current session
-      const selection = await this.selectionRepo.findOne({
-        where: {
-          user: { id: userId },
-          gameSession: { id: this.currentSession.id },
-        },
-        relations: ['user', 'gameSession'],
-      });
-
-      if (!selection) {
-        throw new NotFoundException('Player has not joined the session yet');
-      }
-
-      if (selection.selectedNumber !== null) {
-        throw new ConflictException('Player has already selected a number');
-      }
-
-      // Update the selected number
-      selection.selectedNumber = selectedNumber;
-      await this.selectionRepo.save(selection);
-
-      return {
-        message: 'User selection updated',
-        sessionId: this.currentSession.id,
-      };
-    } catch (error) {
-      this.logger.error(error);
-      throw error;
+    if (selection.selectedNumber !== null) {
+      throw new ConflictException('Player has already selected a number');
     }
+
+    selection.selectedNumber = selectedNumber;
+    await this.selectionRepo.save(selection);
+
+    return {
+      message: 'User selection updated',
+      sessionId: this.currentSession.id,
+    };
   }
 
-  // Get info about the current session
+  // Get current session status
   async getCurrentSessionInfo() {
     if (!this.currentSession) {
       throw new NotFoundException('No active session');
@@ -176,20 +169,12 @@ export class GameService {
       relations: ['user'],
     });
 
-    const { winningNumber, startTime, endTime, id } = this.currentSession;
-    // Calculate next session start time
-    const nextSessionStartTime = new Date(endTime.getTime() + this.breakTime);
-    // Count players who have joined
-    const totalPlayers = selections.length;
-
     return {
       sessionActive: true,
-      id,
-      startTime,
-      endTime,
-      nextSessionStartTime,
-      winningNumber,
-      totalPlayers,
+      id: this.currentSession.id,
+      startTime: this.currentSession.startTime,
+      endTime: this.currentSession.endTime,
+      totalPlayers: selections.length,
       players: selections.map((sel) => ({
         id: sel.user.id,
         username: sel.user.username,
@@ -200,10 +185,10 @@ export class GameService {
     };
   }
 
-  // Get info about a ended session
+  // Get ended session result
   async getEndedSessionInfo(sessionId?: UUID) {
     const id = sessionId ?? this.currentSession?.id;
-    // Fetch session with player selections and users
+
     const session = await this.sessionRepo.findOne({
       where: { id },
       relations: ['selections', 'selections.user'],
@@ -213,15 +198,11 @@ export class GameService {
       throw new NotFoundException('Session not found');
     }
 
-    // Calculate total players
     const totalPlayers = session.selections.length;
-
-    // Calculate total wins
     const totalWins = session.selections.filter(
       (sel) => sel.selectedNumber === session.winningNumber,
     ).length;
 
-    // Calculate next session start time (20 seconds after endTime)
     const nextSessionStartTime = new Date(
       session.endTime.getTime() + this.breakTime,
     );
@@ -235,8 +216,7 @@ export class GameService {
     };
   }
 
-  // Get top 10 players by wins
-
+  // Get top 10 players from the session
   async getTopPlayers(sessionId: UUID): Promise<User[]> {
     const session = await this.sessionRepo.findOne({
       where: { id: sessionId },
@@ -247,23 +227,21 @@ export class GameService {
       throw new NotFoundException('Session not found');
     }
 
-    // Use a Set to deduplicate user IDs
     const userIds = [...new Set(session.selections.map((sel) => sel.user.id))];
 
     if (userIds.length === 0) {
       return [];
     }
 
-    const topPlayers = await this.userRepo.find({
+    return this.userRepo.find({
       where: { id: In(userIds) },
       order: { wins: 'DESC' },
       take: 10,
       select: ['id', 'username', 'wins'],
     });
-
-    return topPlayers;
   }
 
+  // Expose current session
   getCurrentSession() {
     return this.currentSession;
   }
